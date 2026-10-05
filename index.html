@@ -86,8 +86,7 @@ async function init(){
  }catch(e){
    console.error(e);
    setStatus("Database non disponibile");
-   const msg=(e && (e.message || e.error_description || e.msg)) ? (e.message || e.error_description || e.msg) : String(e);
-   document.getElementById("notice").innerHTML="Connessione Supabase fallita: <b>"+String(msg).replace(/[<>]/g,"") + "</b><br><small>Apri la console del browser se serve per ulteriori dettagli.</small>";
+   document.getElementById("notice").innerHTML="Per ora puoi vedere il tracker, ma il salvataggio online non è attivo. Se compare questo messaggio, dobbiamo abilitare l'accesso anonimo in Supabase.";
    showDayLocal(1);
  }
 }
@@ -102,14 +101,22 @@ function localExercise(day,i){return {id:null,day_number:day,name:workouts[day][
 
 async function lastForExercise(exerciseId){
  if(!currentUser || !exerciseId) return null;
- const {data,error}=await db.from("workout_sets")
-   .select("weight_kg,reps,session_id,workout_sessions!inner(user_id,started_at)")
-   .eq("exercise_id",exerciseId)
-   .eq("workout_sessions.user_id",currentUser.id)
+ const {data:sessions,error:e1}=await db.from("workout_sessions")
+   .select("id,started_at")
+   .eq("user_id",currentUser.id)
+   .eq("day_number",currentDay)
    .order("started_at",{ascending:false})
-   .limit(3);
- if(error) return null;
- return data ? data.reverse() : null;
+   .limit(20);
+ if(e1 || !sessions?.length) return null;
+ for(const session of sessions){
+   const {data:sets,error:e2}=await db.from("workout_sets")
+     .select("weight_kg,reps,set_number")
+     .eq("session_id",session.id)
+     .eq("exercise_id",exerciseId)
+     .order("set_number",{ascending:true});
+   if(!e2 && sets?.length) return sets;
+ }
+ return null;
 }
 
 async function showDay(day){
@@ -123,10 +130,13 @@ async function showDay(day){
    const lastText=last&&last.length?last.map(x=>`${x.weight_kg??"—"} kg × ${x.reps??"—"}`).join(" · "):"Nessuna seduta salvata";
    const card=document.createElement("section"); card.className="card";
    let rows="";
-   for(let s=1;s<=3;s++) rows+=`<div class="row">
-      <label>Serie ${s} · kg<input id="kg_${i}_${s}" inputmode="decimal" placeholder="${ex.reference_load||""}"></label>
-      <label>&nbsp;reps<input id="reps_${i}_${s}" inputmode="numeric" placeholder="8"></label>
-   </div>`;
+   for(let s=1;s<=3;s++){
+     const prev=last?.find(x=>x.set_number===s)||{};
+     rows+=`<div class="row">
+      <label>Serie ${s} · kg<input id="kg_${i}_${s}" inputmode="decimal" placeholder="${ex.reference_load||""}" value="${prev.weight_kg??""}"></label>
+      <label>&nbsp;reps<input id="reps_${i}_${s}" inputmode="numeric" placeholder="8" value="${prev.reps??""}"></label>
+     </div>`;
+   }
    card.innerHTML=`<h2>${i+1}. ${ex.name}</h2>
      <div class="ref">Riferimento: ${ex.reference_load||"—"}</div>
      <div class="last">Ultima seduta: ${lastText}</div>
