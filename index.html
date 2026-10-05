@@ -86,7 +86,8 @@ async function init(){
  }catch(e){
    console.error(e);
    setStatus("Database non disponibile");
-   document.getElementById("notice").innerHTML="Per ora puoi vedere il tracker, ma il salvataggio online non è attivo. Se compare questo messaggio, dobbiamo abilitare l'accesso anonimo in Supabase.";
+   const msg=(e && (e.message || e.error_description || e.msg)) ? (e.message || e.error_description || e.msg) : String(e);
+   document.getElementById("notice").innerHTML="Connessione Supabase fallita: <b>"+String(msg).replace(/[<>]/g,"") + "</b><br><small>Apri la console del browser se serve per ulteriori dettagli.</small>";
    showDayLocal(1);
  }
 }
