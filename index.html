@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<title>Obiettivo Benessere - Allenamento</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f3f3f3;color:#111}
+header{background:#111;color:#fff;padding:15px;position:sticky;top:0;z-index:5}
+h1{margin:0 0 10px;font-size:21px}.tabs{display:flex;gap:7px}.tabs button{flex:1;padding:10px 6px;border:0;border-radius:9px;background:#444;color:#fff}.tabs button.active{background:#fff;color:#111}
+main{max-width:700px;margin:auto;padding:14px 14px 110px}.status{text-align:center;font-size:12px;margin:4px 0 12px;color:#666}
+.card{background:#fff;border-radius:14px;padding:15px;margin-bottom:12px;box-shadow:0 1px 5px #0002}
+h2{font-size:17px;margin:0 0 5px}.ref,.last{font-size:12px;color:#666;margin:4px 0 12px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}label{font-size:11px;color:#666}
+input{width:100%;padding:10px;font-size:17px;border:1px solid #ccc;border-radius:8px}
+.save{width:100%;padding:11px;border:0;border-radius:9px;background:#111;color:#fff;font-size:15px;margin-top:5px}
+.timer{position:fixed;bottom:12px;left:12px;right:12px;background:#111;color:#fff;border-radius:13px;padding:11px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 18px #0004;z-index:10}
+.timer button{border:0;border-radius:7px;padding:7px 9px;margin-left:3px}
+.notice{background:#fff3cd;border-radius:10px;padding:10px;font-size:12px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<header>
+<h1>Allenamento</h1>
+<div class="tabs">
+<button id="d1" onclick="showDay(1)">Giorno 1</button>
+<button id="d2" onclick="showDay(2)">Giorno 2</button>
+<button id="d3" onclick="showDay(3)">Giorno 3</button>
+</div>
+</header>
+<main>
+<div id="status" class="status">Connessione al database…</div>
+<div id="notice"></div>
+<div id="content"></div>
+</main>
+<div class="timer">
+<span id="timer">Recupero 1:30</span>
+<div><button onclick="startTimer(60)">1:00</button><button onclick="startTimer(90)">1:30</button><button onclick="startTimer(120)">2:00</button><button onclick="startTimer(180)">3:00</button></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://insuuebfnvluspevideh.supabase.co";
+const SUPABASE_KEY = "sb_publishable_xdyDHlvH-9Nqxo3HfR1NGQ_k0BqHcIm";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const workouts={
+1:[
+["Chest inclinata manubri","12–14 kg"],
+["Flyes","Da determinare"],
+["Panca piana","Almeno 20 kg"],
+["Pulley","Almeno 40 kg"],
+["Lat machine","Da determinare"],
+["Macchinario schiena","Da determinare"]],
+2:[
+["Shoulder press manubri","14 kg per manubrio"],
+["Tricipiti corda","15 kg"],
+["Skull crushers","6 kg"],
+["Overhead extension","14 kg, un manubrio"]],
+3:[
+["Hammer curl","10–12 kg"],
+["Barbell curl","5 + 5 kg"],
+["Preacher curl","7 kg"],
+["Extra / libero","A scelta"]]
+};
+
+let currentDay=1, timerInterval=null, currentUser=null, exerciseRows=[];
+
+function setStatus(t,ok=false){
+ const el=document.getElementById("status"); el.textContent=t; el.style.color=ok?"#176b2c":"#666";
+}
+
+async function init(){
+ try{
+   let {data:{session}}=await db.auth.getSession();
+   if(!session){
+     const r=await db.auth.signInAnonymously();
+     if(r.error) throw r.error;
+     session=r.data.session;
+   }
+   currentUser=session.user;
+   setStatus("Database collegato ✓",true);
+   await loadExercises();
+   await showDay(1);
+ }catch(e){
+   console.error(e);
+   setStatus("Database non disponibile");
+   document.getElementById("notice").innerHTML="Per ora puoi vedere il tracker, ma il salvataggio online non è attivo. Se compare questo messaggio, dobbiamo abilitare l'accesso anonimo in Supabase.";
+   showDayLocal(1);
+ }
+}
+
+async function loadExercises(){
+ const {data,error}=await db.from("exercises").select("*").order("day_number").order("sort_order");
+ if(error) throw error;
+ exerciseRows=data;
+}
+
+function localExercise(day,i){return {id:null,day_number:day,name:workouts[day][i][0],reference_load:workouts[day][i][1],sort_order:i+1};}
+
+async function lastForExercise(exerciseId){
+ if(!currentUser || !exerciseId) return null;
+ const {data,error}=await db.from("workout_sets")
+   .select("weight_kg,reps,set_number,created_at,workout_sessions!inner(started_at,user_id,day_number)")
+   .eq("exercise_id",exerciseId)
+   .eq("workout_sessions.user_id",currentUser.id)
+   .eq("workout_sessions.day_number",currentDay)
+   .order("created_at",{ascending:false})
+   .limit(3);
+ if(error){
+   console.error("Errore lettura ultima seduta",error);
+   return null;
+ }
+ if(!data?.length) return null;
+ return [...data].sort((a,b)=>(a.set_number??0)-(b.set_number??0));
+}
+
+async function showDay(day){
+ currentDay=day;
+ [1,2,3].forEach(d=>document.getElementById("d"+d).classList.toggle("active",d===day));
+ const content=document.getElementById("content"); content.innerHTML="";
+ const exs=exerciseRows.filter(x=>x.day_number===day);
+ for(let i=0;i<workouts[day].length;i++){
+   const ex=exs.find(x=>x.sort_order===i+1)||localExercise(day,i);
+   const last=ex.id?await lastForExercise(ex.id):null;
+   const lastText=last&&last.length?last.map(x=>`${x.weight_kg??"—"} kg × ${x.reps??"—"}`).join(" · "):"Nessuna seduta salvata";
+   const card=document.createElement("section"); card.className="card";
+   let rows="";
+   for(let s=1;s<=3;s++){
+     const prev=last?.find(x=>x.set_number===s)||{};
+     rows+=`<div class="row">
+      <label>Serie ${s} · kg<input id="kg_${i}_${s}" inputmode="decimal" placeholder="${ex.reference_load||""}" value="${prev.weight_kg??""}"></label>
+      <label>&nbsp;reps<input id="reps_${i}_${s}" inputmode="numeric" placeholder="8" value="${prev.reps??""}"></label>
+     </div>`;
+   }
+   card.innerHTML=`<h2>${i+1}. ${ex.name}</h2>
+     <div class="ref">Riferimento: ${ex.reference_load||"—"}</div>
+     <div class="last">Ultima seduta: ${lastText}</div>
+     ${rows}<button class="save" onclick="saveExercise(${i},${ex.id||"null"})">Salva esercizio e avvia recupero</button>`;
+   content.appendChild(card);
+ }
+}
+
+function showDayLocal(day){
+ currentDay=day;
+ [1,2,3].forEach(d=>document.getElementById("d"+d).classList.toggle("active",d===day));
+ const content=document.getElementById("content"); content.innerHTML="";
+ workouts[day].forEach((ex,i)=>{
+   const card=document.createElement("section");card.className="card";
+   let rows="";for(let s=1;s<=3;s++)rows+=`<div class="row"><label>Serie ${s} · kg<input id="kg_${i}_${s}" placeholder="${ex[1]}"></label><label>&nbsp;reps<input id="reps_${i}_${s}" placeholder="8"></label></div>`;
+   card.innerHTML=`<h2>${i+1}. ${ex[0]}</h2><div class="ref">Riferimento: ${ex[1]}</div>${rows}<button class="save" onclick="saveLocal(${i})">Salva esercizio e avvia recupero</button>`;
+   content.appendChild(card);
+ });
+}
+
+async function saveExercise(i,exerciseId){
+ if(!currentUser || !exerciseId){alert("Il database non è collegato.");return;}
+ const sets=[];
+ for(let s=1;s<=3;s++){
+   const kg=document.getElementById(`kg_${i}_${s}`).value.trim();
+   const reps=document.getElementById(`reps_${i}_${s}`).value.trim();
+   if(kg||reps) sets.push({set_number:s,weight_kg:kg?Number(kg):null,reps:reps?Number(reps):null});
+ }
+ if(!sets.length){alert("Inserisci almeno una serie.");return;}
+ const {data:session,error:e1}=await db.from("workout_sessions").insert({user_id:currentUser.id,day_number:currentDay}).select().single();
+ if(e1){alert("Errore nel salvataggio: "+e1.message);return;}
+ const payload=sets.map(x=>({...x,session_id:session.id,exercise_id:exerciseId}));
+ const {error:e2}=await db.from("workout_sets").insert(payload);
+ if(e2){await db.from("workout_sessions").delete().eq("id",session.id);alert("Errore nel salvataggio delle serie: "+e2.message);return;}
+ setStatus("Salvato online ✓",true); startTimer(90); await showDay(currentDay);
+}
+
+function saveLocal(i){startTimer(90);alert("Modalità locale: il database non è collegato.");}
+function startTimer(seconds){clearInterval(timerInterval);let r=seconds;updateTimer(r);timerInterval=setInterval(()=>{r--;updateTimer(r);if(r<=0){clearInterval(timerInterval);navigator.vibrate?.(300)}},1000)}
+function updateTimer(s){document.getElementById("timer").textContent="Recupero "+Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
+
+init();
+</script>
+</body>
+</html>
